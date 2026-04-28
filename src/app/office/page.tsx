@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, orderBy } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { CheckCircle2, Clock, FileText, School, AlertCircle } from 'lucide-react';
+
+const ADMIN_EMAILS = ['ppanfili@htsdnj.org', 'dpanfili@htsdnj.org'];
 
 interface SignoutRecord {
   id: string;
@@ -23,6 +26,17 @@ export default function OfficeDashboard() {
   const [activeSignouts, setActiveSignouts] = useState<SignoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     // Real-time listener for pending signouts
@@ -76,6 +90,21 @@ export default function OfficeDashboard() {
     const date = new Date(isoString);
     return date.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
   };
+
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-blue-600 font-semibold">Loading...</div></div>;
+  }
+
+  if (!user || !ADMIN_EMAILS.includes(user.email || '')) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 text-center">
+        <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h1>
+        <p className="text-gray-600 mb-6">You do not have administrative privileges. Please log in with an authorized account on the homepage first.</p>
+        <a href="/" className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700">Return to Home</a>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

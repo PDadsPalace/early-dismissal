@@ -1,15 +1,29 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import { collection, writeBatch, doc } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+
+const ADMIN_EMAILS = ['ppanfili@htsdnj.org', 'dpanfili@htsdnj.org'];
 
 export default function AdminPage() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
+  
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -81,6 +95,21 @@ export default function AdminPage() {
       }
     });
   };
+
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-blue-600 font-semibold">Loading...</div></div>;
+  }
+
+  if (!user || !ADMIN_EMAILS.includes(user.email || '')) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 text-center">
+        <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h1>
+        <p className="text-gray-600 mb-6">You do not have administrative privileges. Please log in with an authorized account on the homepage first.</p>
+        <a href="/" className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700">Return to Home</a>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
