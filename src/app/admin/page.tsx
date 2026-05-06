@@ -5,7 +5,7 @@ import Papa from 'papaparse';
 import { db, auth } from '@/lib/firebase';
 import { collection, writeBatch, doc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+import { UploadCloud, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const ADMIN_EMAILS = ['ppanfili@htsdnj.org', 'dpanfili@htsdnj.org'];
 
@@ -146,7 +146,20 @@ export default function AdminPage() {
                   <p className="pl-1">or drag and drop</p>
                 </div>
                 <p className="text-xs leading-5 text-gray-600">CSV files up to 10MB</p>
-                {file && <p className="mt-2 text-sm font-medium text-green-600 border border-green-200 bg-green-50 py-1 px-3 rounded-full inline-block">Selected: {file.name}</p>}
+                {file && (
+                  <div className="mt-4 flex items-center justify-center">
+                    <p className="text-sm font-medium text-green-700 border border-green-200 bg-green-50 py-1.5 px-4 rounded-full flex items-center gap-2">
+                      Selected: {file.name}
+                      <button 
+                        onClick={(e) => { e.preventDefault(); setFile(null); }} 
+                        className="text-green-600 hover:text-green-900 bg-green-100 hover:bg-green-200 rounded-full p-0.5 transition-colors focus:outline-none"
+                        title="Remove file"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 

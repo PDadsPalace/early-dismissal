@@ -9,7 +9,7 @@ import {
   onAuthStateChanged,
   User
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, addDoc, deleteDoc } from 'firebase/firestore';
 import { CheckCircle2, AlertCircle, Mail, School, ArrowRight, CheckSquare } from 'lucide-react';
 
 export default function Home() {
@@ -188,6 +188,26 @@ export default function Home() {
     }
   };
 
+  const handleUnlinkAccount = async () => {
+    if (!user || !parentData) return;
+    
+    if (!window.confirm("Are you sure you want to delete your registered account? You will need to start from scratch and register again.")) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, 'parents', user.uid));
+      setIsLinked(false);
+      setParentData(null);
+      setLinkedStudentsData([]);
+      setSelectedStudents([]);
+      setCurrentStep(1);
+    } catch (error) {
+      console.error("Error unlinking account", error);
+      alert("Failed to delete account. Please try again.");
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-blue-600 font-semibold">Loading...</div></div>;
   }
@@ -360,6 +380,16 @@ export default function Home() {
               </div>
             )}
 
+          </div>
+          
+          {/* Account Management */}
+          <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 text-center">
+            <button 
+              onClick={handleUnlinkAccount}
+              className="text-xs text-gray-500 hover:text-red-600 font-medium transition-colors"
+            >
+              Delete Registered Account
+            </button>
           </div>
         </div>
       </div>
