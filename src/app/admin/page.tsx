@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from '@/lib/firebase';
-import { collection, writeBatch, doc } from 'firebase/firestore';
+import { collection, writeBatch, doc, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { UploadCloud, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
@@ -14,6 +14,9 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
   
+  const [registeredParents, setRegisteredParents] = useState<any[]>([]);
+  const [loadingParents, setLoadingParents] = useState(false);
+  
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -21,9 +24,25 @@ export default function AdminPage() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
+      if (currentUser && ADMIN_EMAILS.includes(currentUser.email || '')) {
+        fetchParents();
+      }
     });
     return () => unsubscribe();
   }, []);
+
+  const fetchParents = async () => {
+    setLoadingParents(true);
+    try {
+      const querySnapshot = await getDocs(collection(db, 'parents'));
+      const parentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRegisteredParents(parentsData);
+    } catch (error) {
+      console.error("Error fetching parents:", error);
+    } finally {
+      setLoadingParents(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -113,7 +132,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto space-y-8">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="border-b border-gray-100 bg-gray-50 px-6 py-5">
             <h1 className="text-xl font-bold text-gray-900">Admin Data Engine</h1>
@@ -180,6 +199,60 @@ export default function AdminPage() {
                   <h3 className="text-sm font-medium">{status.message}</h3>
                 </div>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* Registered Accounts Section */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-b border-gray-100 bg-gray-50 px-6 py-5 flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Registered Accounts</h2>
+              <p className="text-sm text-gray-500 mt-1">Parents who have successfully linked their students.</p>
+            </div>
+            <button onClick={fetchParents} className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+              Refresh List
+            </button>
+          </div>
+          
+          <div className="p-0 overflow-x-auto">
+            {loadingParents ? (
+              <div className="text-center py-8 text-gray-500">Loading registrations...</div>
+            ) : registeredParents.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">No registered accounts found.</div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead>
+                  <tr>
+                    <th className="px-6 py-4 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent Name</th>
+                    <th className="px-6 py-4 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                    <th className="px-6 py-4 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Linked Student IDs</th>
+                    <th className="px-6 py-4 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registered At</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {registeredParents.map((parent) => (
+                    <tr key={parent.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{parent.parentName}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{parent.email}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {parent.linkedStudents ? (
+                          <div className="flex flex-wrap gap-1">
+                            {parent.linkedStudents.map((id: string) => (
+                              <span key={id} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        ) : 'None'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {parent.createdAt ? new Date(parent.createdAt).toLocaleString() : 'N/A'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>

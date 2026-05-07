@@ -7,9 +7,10 @@ import {
   signInWithEmailLink, 
   sendSignInLinkToEmail, 
   onAuthStateChanged,
-  User
+  User,
+  signOut
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, addDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, addDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
 import { CheckCircle2, AlertCircle, Mail, School, ArrowRight, CheckSquare } from 'lucide-react';
 
 export default function Home() {
@@ -22,6 +23,10 @@ export default function Home() {
   const [isLinked, setIsLinked] = useState(false);
   const [studentId, setStudentId] = useState('');
   const [parentName, setParentName] = useState('');
+  
+  // Multi-child State
+  const [unlinkedSiblings, setUnlinkedSiblings] = useState<any[]>([]);
+  const [isLinkingAnother, setIsLinkingAnother] = useState(false);
 
   // Express Lane State
   const [currentStep, setCurrentStep] = useState(1);
@@ -119,17 +124,68 @@ export default function Home() {
 
       if (studentDoc.exists()) {
         const studentData = studentDoc.data();
-        if (parentName.trim().length > 2) {
-          await setDoc(doc(db, 'parents', user.uid), {
-            email: user.email,
-            parentName: parentName,
-            linkedStudents: [studentId],
-            createdAt: new Date().toISOString()
-          });
+        
+        // SECURITY VALIDATION: Exact match / Substring inclusion
+        const guardianNameLower = (studentData.guardianName || '').toLowerCase();
+        const parentNameLower = parentName.trim().toLowerCase();
+        
+        if (!guardianNameLower.includes(parentNameLower)) {
+          setStatus({ type: 'error', message: 'Parent name does not match school records for this student. Please check spelling.' });
+          return;
+        }
 
-          // Reload state
-          await checkLinkedStatus(user);
-          setStatus({ type: 'success', message: 'Account securely linked!' });
+        if (parentName.trim().length > 2) {
+          if (isLinked && parentData) {
+            // Adding a subsequent child
+            const updatedLinked = [...parentData.linkedStudents, studentId];
+            await setDoc(doc(db, 'parents', user.uid), {
+              ...parentData,
+              linkedStudents: updatedLinked
+            });
+            
+            const updatedUnlinked = unlinkedSiblings.filter(s => s.id !== studentId);
+            setUnlinkedSiblings(updatedUnlinked);
+            
+            if (updatedUnlinked.length > 0) {
+              setStudentId('');
+              setStatus({ type: 'success', message: `${studentData.studentName} connected. You can link another.` });
+            } else {
+              setIsLinkingAnother(false);
+              await checkLinkedStatus(user);
+              setStatus({ type: 'success', message: 'All children connected securely!' });
+            }
+          } else {
+            // Initial child
+            await setDoc(doc(db, 'parents', user.uid), {
+              email: user.email,
+              parentName: parentName,
+              linkedStudents: [studentId],
+              createdAt: new Date().toISOString()
+            });
+
+            // Find siblings
+            const q = query(collection(db, 'students'), where('guardianName', '==', studentData.guardianName));
+            const querySnapshot = await getDocs(q);
+            const siblings = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            
+            const remaining = siblings.filter(s => s.id !== studentId);
+            
+            if (remaining.length > 0) {
+              setUnlinkedSiblings(remaining);
+              setIsLinkingAnother(true);
+              setIsLinked(true);
+              setParentData({
+                email: user.email,
+                parentName: parentName,
+                linkedStudents: [studentId]
+              });
+              setStudentId('');
+              setStatus({ type: 'success', message: `${studentData.studentName} has been connected!` });
+            } else {
+              await checkLinkedStatus(user);
+              setStatus({ type: 'success', message: 'Account securely linked!' });
+            }
+          }
         } else {
           setStatus({ type: 'error', message: 'Please enter your full name.' });
         }
@@ -188,6 +244,19 @@ export default function Home() {
     }
   };
 
+  const handleLogOut = async () => {
+    try {
+      await signOut(auth);
+      setIsLinked(false);
+      setParentData(null);
+      setLinkedStudentsData([]);
+      setSelectedStudents([]);
+      setCurrentStep(1);
+    } catch (error) {
+      console.error("Error signing out", error);
+    }
+  };
+
   const handleUnlinkAccount = async () => {
     if (!user || !parentData) return;
     
@@ -212,8 +281,52 @@ export default function Home() {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-blue-600 font-semibold">Loading...</div></div>;
   }
 
+  // --- VIEW 1.5: LINK ANOTHER CHILD ---
+  if (user && isLinked && isLinkingAnother) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6 flex flex-col justify-center">
+        <div className="max-w-md mx-auto w-full bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">Connect Another Child</h1>
+          <p className="text-sm text-gray-500 text-center mb-6">Enter their Student ID to link them to your account.</p>
+
+          <form onSubmit={handleHandshake} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Another Student ID#</label>
+              <input 
+                type="text" 
+                required
+                value={studentId}
+                onChange={(e) => setStudentId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                placeholder="e.g. 55083"
+              />
+            </div>
+            
+            <button type="submit" className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+              Verify & Link Child
+            </button>
+            <button type="button" onClick={async () => { 
+                setIsLinkingAnother(false); 
+                await checkLinkedStatus(user); 
+              }} 
+              className="w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+              No, skip for now
+            </button>
+          </form>
+
+          {status.message && (
+            <div className={`mt-4 p-3 rounded-md flex items-start gap-2 ${status.type === 'error' ? 'bg-red-50 text-red-800' : 'bg-blue-50 text-blue-800'}`}>
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <p className="text-sm">{status.message}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // --- VIEW 1: THE EXPRESS LANE (Daily Pickup Flow) ---
-  if (user && isLinked && parentData) {
+  if (user && isLinked && parentData && !isLinkingAnother) {
     return (
       <div className="min-h-screen bg-gray-50 p-4 sm:p-6 pb-24">
         <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -383,13 +496,27 @@ export default function Home() {
           </div>
           
           {/* Account Management */}
-          <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 text-center">
+          <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 flex flex-col gap-3">
             <button 
-              onClick={handleUnlinkAccount}
-              className="text-xs text-gray-500 hover:text-red-600 font-medium transition-colors"
+              onClick={() => { setStudentId(''); setIsLinkingAnother(true); }}
+              className="w-full py-2 border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md text-sm font-medium transition-colors"
             >
-              Delete Registered Account
+              + Link Another Child
             </button>
+            <div className="flex justify-between items-center px-2">
+              <button 
+                onClick={handleLogOut}
+                className="text-xs text-gray-500 hover:text-gray-800 font-medium transition-colors"
+              >
+                Log Out
+              </button>
+              <button 
+                onClick={handleUnlinkAccount}
+                className="text-xs text-gray-500 hover:text-red-600 font-medium transition-colors"
+              >
+                Delete Registered Account
+              </button>
+            </div>
           </div>
         </div>
       </div>
