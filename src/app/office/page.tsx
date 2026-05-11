@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { CheckCircle2, Clock, FileText, School, AlertCircle } from 'lucide-react';
 
@@ -22,8 +22,21 @@ interface SignoutRecord {
   status: 'Pending' | 'Dismissed';
 }
 
+interface LinkRequest {
+  id: string;
+  userId: string;
+  userEmail: string;
+  studentId: string;
+  studentName: string;
+  guardianNameOnRecord: string;
+  parentNameProvided: string;
+  status: 'pending' | 'approved' | 'denied';
+  timestamp: string;
+}
+
 export default function OfficeDashboard() {
   const [activeSignouts, setActiveSignouts] = useState<SignoutRecord[]>([]);
+  const [pendingLinkRequests, setPendingLinkRequests] = useState<LinkRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
@@ -64,8 +77,53 @@ export default function OfficeDashboard() {
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Real-time listener for link requests
+    const qLinks = query(collection(db, 'linkRequests'), where('status', '==', 'pending'));
+    const unsubscribeLinks = onSnapshot(qLinks, (snapshot) => {
+      const records: LinkRequest[] = [];
+      snapshot.forEach((doc) => {
+        records.push({ id: doc.id, ...doc.data() } as LinkRequest);
+      });
+      records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setPendingLinkRequests(records);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeLinks();
+    };
   }, []);
+
+  const handleLinkRequest = async (request: LinkRequest, action: 'approve' | 'deny') => {
+    try {
+      if (action === 'approve') {
+        const parentDocRef = doc(db, 'parents', request.userId);
+        const parentDoc = await getDoc(parentDocRef);
+        
+        if (parentDoc.exists()) {
+          const pData = parentDoc.data();
+          const updatedLinked = [...(pData.linkedStudents || []), request.studentId];
+          // deduplicate just in case
+          const uniqueLinked = Array.from(new Set(updatedLinked));
+          await updateDoc(parentDocRef, { linkedStudents: uniqueLinked });
+        } else {
+          await setDoc(parentDocRef, {
+            email: request.userEmail,
+            parentName: request.parentNameProvided,
+            linkedStudents: [request.studentId],
+            createdAt: new Date().toISOString()
+          });
+        }
+        
+        await updateDoc(doc(db, 'linkRequests', request.id), { status: 'approved' });
+      } else {
+        await updateDoc(doc(db, 'linkRequests', request.id), { status: 'denied' });
+      }
+    } catch (err) {
+      console.error("Error handling link request:", err);
+      alert("Failed to process request.");
+    }
+  };
 
   const handleDismiss = async (recordId: string) => {
     try {
@@ -135,6 +193,62 @@ export default function OfficeDashboard() {
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-800">
             <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <p>{error}</p>
+          </div>
+        )}
+
+        {/* Link Requests Queue */}
+        {pendingLinkRequests.length > 0 && (
+          <div className="mb-8 bg-amber-50 rounded-xl shadow-sm border border-amber-200 overflow-hidden animate-in fade-in slide-in-from-top-4">
+            <div className="px-6 py-4 border-b border-amber-200 bg-amber-100/50">
+              <h2 className="text-lg font-bold text-amber-900 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5" /> Pending Connection Approvals
+              </h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-amber-200">
+                <thead className="bg-amber-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-amber-800 uppercase tracking-wider">Student</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-amber-800 uppercase tracking-wider">Provided Name</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-amber-800 uppercase tracking-wider">Record Name</th>
+                    <th scope="col" className="px-6 py-3 text-right text-xs font-bold text-amber-800 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-amber-100">
+                  {pendingLinkRequests.map((req) => (
+                    <tr key={req.id}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-bold text-gray-900">{req.studentName}</div>
+                        <div className="text-xs text-gray-500">ID: {req.studentId}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-bold text-gray-900">{req.parentNameProvided}</div>
+                        <div className="text-xs text-gray-500">{req.userEmail}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {req.guardianNameOnRecord || 'None'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => handleLinkRequest(req, 'deny')}
+                            className="px-3 py-1.5 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 rounded-md text-sm font-bold transition-colors"
+                          >
+                            Deny
+                          </button>
+                          <button
+                            onClick={() => handleLinkRequest(req, 'approve')}
+                            className="px-3 py-1.5 border border-transparent text-white bg-green-600 hover:bg-green-700 rounded-md text-sm font-bold transition-colors shadow-sm"
+                          >
+                            Approve
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

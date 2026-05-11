@@ -10,8 +10,8 @@ import {
   User,
   signOut
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, addDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { CheckCircle2, AlertCircle, Mail, School, ArrowRight, CheckSquare } from 'lucide-react';
+import { doc, getDoc, setDoc, collection, addDoc, deleteDoc, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { CheckCircle2, AlertCircle, Mail, School, ArrowRight, CheckSquare, Clock } from 'lucide-react';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -27,6 +27,10 @@ export default function Home() {
   // Multi-child State
   const [unlinkedSiblings, setUnlinkedSiblings] = useState<any[]>([]);
   const [isLinkingAnother, setIsLinkingAnother] = useState(false);
+
+  // Pending Link Request State
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
 
   // Express Lane State
   const [currentStep, setCurrentStep] = useState(1);
@@ -61,6 +65,7 @@ export default function Home() {
       setUser(currentUser);
       if (currentUser) {
         checkLinkedStatus(currentUser);
+        setupRequestListener(currentUser.uid);
       } else {
         setLoading(false);
       }
@@ -68,6 +73,38 @@ export default function Home() {
 
     return () => unsubscribe();
   }, []);
+
+  const setupRequestListener = (uid: string) => {
+    const q = query(
+      collection(db, 'linkRequests'),
+      where('userId', '==', uid)
+    );
+    onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        const req = change.doc.data();
+        if (change.type === 'added' || change.type === 'modified') {
+          if (req.status === 'pending') {
+            setAwaitingApproval(true);
+            setCurrentRequestId(change.doc.id);
+          } else if (req.status === 'denied' && change.doc.id === currentRequestId) {
+            setAwaitingApproval(false);
+            setStatus({ type: 'error', message: 'Denied, please type your full first and last name' });
+            setCurrentRequestId(null);
+            // Delete the denied request so it doesn't trigger again
+            deleteDoc(doc(db, 'linkRequests', change.doc.id));
+          } else if (req.status === 'approved' && change.doc.id === currentRequestId) {
+            setAwaitingApproval(false);
+            setCurrentRequestId(null);
+            if (auth.currentUser) {
+              checkLinkedStatus(auth.currentUser);
+            }
+            // Delete the approved request to clean up
+            deleteDoc(doc(db, 'linkRequests', change.doc.id));
+          }
+        }
+      });
+    });
+  };
 
   const checkLinkedStatus = async (currentUser: User) => {
     try {
@@ -125,12 +162,25 @@ export default function Home() {
       if (studentDoc.exists()) {
         const studentData = studentDoc.data();
         
-        // SECURITY VALIDATION: Exact match / Substring inclusion
-        const guardianNameLower = (studentData.guardianName || '').toLowerCase();
+        // SECURITY VALIDATION: Exact match first, otherwise request approval
+        const guardianNameLower = (studentData.guardianName || '').toLowerCase().trim();
         const parentNameLower = parentName.trim().toLowerCase();
         
-        if (!guardianNameLower.includes(parentNameLower)) {
-          setStatus({ type: 'error', message: 'Parent name does not match school records for this student. Please check spelling.' });
+        if (guardianNameLower !== parentNameLower) {
+          // Submit Link Request to Office
+          const reqRef = await addDoc(collection(db, 'linkRequests'), {
+            userId: user.uid,
+            userEmail: user.email,
+            studentId: studentId,
+            studentName: studentData.studentName,
+            guardianNameOnRecord: studentData.guardianName,
+            parentNameProvided: parentName,
+            status: 'pending',
+            timestamp: new Date().toISOString()
+          });
+          setCurrentRequestId(reqRef.id);
+          setAwaitingApproval(true);
+          setStatus({ type: 'success', message: 'Name verification required. The front office is reviewing your request.' });
           return;
         }
 
@@ -525,6 +575,23 @@ export default function Home() {
 
   // --- VIEW 2: THE HANDSHAKE (Setup Phase) ---
   if (user && !isLinked) {
+    if (awaitingApproval) {
+      return (
+        <div className="min-h-screen bg-gray-50 p-6 flex flex-col justify-center">
+          <div className="max-w-md mx-auto w-full bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Clock className="w-10 h-10 text-blue-600 animate-pulse" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Awaiting Approval</h2>
+            <p className="text-gray-600 mb-6">Your name did not exactly match our automatic records. The front office has been notified and is reviewing your connection request.</p>
+            <div className="flex justify-center">
+               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gray-50 p-6 flex flex-col justify-center">
         <div className="max-w-md mx-auto w-full bg-white rounded-xl shadow-sm border border-gray-100 p-6">
